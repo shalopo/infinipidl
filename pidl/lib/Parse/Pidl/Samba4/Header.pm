@@ -27,7 +27,7 @@ sub pidl($) { $res .= shift; }
 sub tabs()
 {
 	my $res = "";
-	$res .="\t" foreach (1..$tab_depth);
+	$res .="    " foreach (1..$tab_depth);
 	return $res;
 }
 

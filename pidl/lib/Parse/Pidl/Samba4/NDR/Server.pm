@@ -32,7 +32,6 @@ sub gen_dispatch_switch($)
 		pidl "\tcase $fn->{OPNUM}: {\n";
 		pidl "\t\tstruct $fn->{NAME} *r2 = (struct $fn->{NAME} *)r;\n";
 		pidl "\t\tif (DEBUGLEVEL >= 10) {\n";
-		pidl "\t\t\tNDR_PRINT_FUNCTION_DEBUG($fn->{NAME}, NDR_IN, r2);\n";
 		pidl "\t\t}\n";
 		if ($fn->{RETURN_TYPE} && $fn->{RETURN_TYPE} ne "void") {
 			pidl "\t\tr2->out.result = dcesrv_$fn->{NAME}(dce_call, mem_ctx, r2);\n";
@@ -61,7 +60,6 @@ sub gen_reply_switch($)
 		pidl "\t\t\tDEBUG(5,(\"function $fn->{NAME} replied async\\n\"));\n";
 		pidl "\t\t}\n";
 		pidl "\t\tif (DEBUGLEVEL >= 10 && dce_call->fault_code == 0) {\n";
-		pidl "\t\t\tNDR_PRINT_FUNCTION_DEBUG($fn->{NAME}, NDR_OUT | NDR_SET_VALUES, r2);\n";
 		pidl "\t\t}\n";
 		pidl "\t\tif (dce_call->fault_code != 0) {\n";
 		pidl "\t\t\tDEBUG(2,(\"dcerpc_fault %s in $fn->{NAME}\\n\", dcerpc_errstr(mem_ctx, dce_call->fault_code)));\n";

@@ -9,7 +9,7 @@ package Parse::Pidl::Samba4::NDR::Parser;
 
 require Exporter;
 @ISA = qw(Exporter);
-@EXPORT_OK = qw(check_null_pointer NeededFunction NeededElement NeededType $res NeededInterface TypeFunctionName ParseElementPrint);
+@EXPORT_OK = qw(check_null_pointer NeededFunction NeededElement NeededType $res NeededInterface TypeFunctionName);
 
 use strict;
 use Parse::Pidl::Typelist qw(hasType getType mapTypeName typeHasBody);
@@ -823,134 +823,6 @@ sub need_pointer_to($$$)
 	return 0;
 }
 
-sub ParseDataPrint($$$$$)
-{
-	my ($self, $e, $l, $ndr, $var_name) = @_;
-
-	if (not ref($l->{DATA_TYPE}) or defined($l->{DATA_TYPE}->{NAME})) {
-
-		if (need_pointer_to($e, $l, 1)) {
-			$var_name = get_pointer_to($var_name);
-		}
-
-		$self->pidl(TypeFunctionName("ndr_print", $l->{DATA_TYPE})."($ndr, \"$e->{NAME}\", $var_name);");
-	} else {
-		$self->ParseTypePrint($l->{DATA_TYPE}, $ndr, $var_name);
-	}
-}
-
-#####################################################################
-# print scalars in a structure element
-sub ParseElementPrint($$$$$)
-{
-	my($self, $e, $ndr, $var_name, $env) = @_;
-
-	return if (has_property($e, "noprint"));
-	my $cur_depth = 0;
-	my $ignore_depth = 0xFFFF;
-
-	$self->start_flags($e, $ndr);
-	if ($e->{REPRESENTATION_TYPE} ne $e->{TYPE}) {
-		$self->pidl("ndr_print_$e->{REPRESENTATION_TYPE}($ndr, \"$e->{NAME}\", $var_name);");
-		$self->end_flags($e, $ndr);
-		return;
-	}
-
-	$var_name = append_prefix($e, $var_name);
-
-	if (defined(my $value = has_property($e, "value"))) {
-		$var_name = "($ndr->flags & LIBNDR_PRINT_SET_VALUES)?" . ParseExpr($value,$env, $e->{ORIGINAL}) . ":$var_name";
-	}
-
-	foreach my $l (@{$e->{LEVELS}}) {
-		$cur_depth += 1;
-
-		if ($cur_depth > $ignore_depth) {
-			next;
-		}
-
-		if ($l->{TYPE} eq "POINTER") {
-			$self->pidl("ndr_print_ptr($ndr, \"$e->{NAME}\", $var_name);");
-			if ($l->{POINTER_TYPE} eq "ignore") {
-				$self->pidl("/* [ignore] '$e->{NAME}' */");
-				$ignore_depth = $cur_depth;
-				last;
-			}
-			$self->pidl("$ndr->depth++;");
-			if ($l->{POINTER_TYPE} ne "ref") {
-				$self->pidl("if ($var_name) {");
-				$self->indent;
-			}
-			$var_name = get_value_of($var_name);
-		} elsif ($l->{TYPE} eq "ARRAY") {
-			my $length;
-
-			if ($l->{IS_CONFORMANT} or $l->{IS_VARYING}) {
-				$var_name = get_pointer_to($var_name); 
-			}
-			
-			if ($l->{IS_ZERO_TERMINATED} and not defined($l->{LENGTH_IS})) {
-				$length = "ndr_string_length($var_name, sizeof(*$var_name))";
-			} else {
-				$length = ParseExprExt($l->{LENGTH_IS}, $env, $e->{ORIGINAL}, 
-							check_null_pointer($e, $env, sub { $self->pidl(shift); }, "return;"), check_fully_dereferenced($e, $env));
-			}
-
-			if (is_charset_array($e,$l)) {
-				$self->pidl("ndr_print_string($ndr, \"$e->{NAME}\", $var_name);");
-				last;
-			} elsif (has_fast_array($e, $l)) {
-				my $nl = GetNextLevel($e, $l);
-				$self->pidl("ndr_print_array_$nl->{DATA_TYPE}($ndr, \"$e->{NAME}\", $var_name, $length);");
-				last;
-			} else {
-				my $counter = "cntr_$e->{NAME}_$l->{LEVEL_INDEX}";
-
-				$self->pidl("$ndr->print($ndr, \"\%s: ARRAY(\%d)\", \"$e->{NAME}\", (int)$length);");
-				$self->pidl("$ndr->depth++;");
-				$self->pidl("for ($counter = 0; $counter < ($length); $counter++) {");
-				$self->indent;
-
-				$var_name = get_array_element($var_name, $counter);
-			}
-		} elsif ($l->{TYPE} eq "DATA") {
-			$self->ParseDataPrint($e, $l, $ndr, $var_name);
-		} elsif ($l->{TYPE} eq "SWITCH") {
-			my $switch_var = ParseExprExt($l->{SWITCH_IS}, $env, $e->{ORIGINAL}, 
-						check_null_pointer($e, $env, sub { $self->pidl(shift); }, "return;"), check_fully_dereferenced($e, $env));
-			$self->pidl("ndr_print_set_switch_value($ndr, " . get_pointer_to($var_name) . ", $switch_var);");
-		} 
-	}
-
-	foreach my $l (reverse @{$e->{LEVELS}}) {
-		$cur_depth -= 1;
-
-		if ($cur_depth > $ignore_depth) {
-			next;
-		}
-
-		if ($l->{TYPE} eq "POINTER") {
-			if ($l->{POINTER_TYPE} eq "ignore") {
-				next;
-			}
-
-			if ($l->{POINTER_TYPE} ne "ref") {
-				$self->deindent;
-				$self->pidl("}");
-			}
-			$self->pidl("$ndr->depth--;");
-		} elsif (($l->{TYPE} eq "ARRAY")
-			and not is_charset_array($e,$l)
-			and not has_fast_array($e,$l)) {
-			$self->deindent;
-			$self->pidl("}");
-			$self->pidl("$ndr->depth--;");
-		}
-	}
-
-	$self->end_flags($e, $ndr);
-}
-
 #####################################################################
 # parse scalars in a structure element - pull size
 sub ParseSwitchPull($$$$$$)
@@ -1506,35 +1378,6 @@ sub ParseEnumPull($$$$)
 }
 
 #####################################################################
-# generate a print function for an enum
-sub ParseEnumPrint($$$$$)
-{
-	my($self,$enum,$ndr,$name,$varname) = @_;
-
-	$self->pidl("const char *val = NULL;");
-	$self->pidl("");
-
-	$self->start_flags($enum, $ndr);
-
-	$self->pidl("switch ($varname) {");
-	$self->indent;
-	my $els = \@{$enum->{ELEMENTS}};
-	foreach my $i (0 .. $#{$els}) {
-		my $e = ${$els}[$i];
-		chomp $e;
-		if ($e =~ /^(.*)=/) {
-			$e = $1;
-		}
-		$self->pidl("case $e: val = \"$e\"; break;");
-	}
-
-	$self->deindent;
-	$self->pidl("}");
-	
-	$self->pidl("ndr_print_enum($ndr, name, \"$enum->{TYPE}\", val, $varname);");
-
-	$self->end_flags($enum, $ndr);
-}
 
 sub DeclEnum($$$$)
 {
@@ -1547,7 +1390,6 @@ $typefamily{ENUM} = {
 	DECL => \&DeclEnum,
 	PUSH_FN_BODY => \&ParseEnumPush,
 	PULL_FN_BODY => \&ParseEnumPull,
-	PRINT_FN_BODY => \&ParseEnumPrint,
 };
 
 #####################################################################
@@ -1581,43 +1423,6 @@ sub ParseBitmapPull($$$$)
 }
 
 #####################################################################
-# generate a print function for an bitmap
-sub ParseBitmapPrintElement($$$$$$)
-{
-	my($self,$e,$bitmap,$ndr,$name,$varname) = @_;
-	my($type_decl) = mapTypeName($bitmap->{BASE_TYPE});
-	my($type_fn) = $bitmap->{BASE_TYPE};
-	my($flag);
-
-	if ($e =~ /^(\w+) .*$/) {
-		$flag = "$1";
-	} else {
-		die "Bitmap: \"$name\" invalid Flag: \"$e\"";
-	}
-
-	$self->pidl("ndr_print_bitmap_flag($ndr, sizeof($type_decl), \"$flag\", $flag, $varname);");
-}
-
-#####################################################################
-# generate a print function for an bitmap
-sub ParseBitmapPrint($$$$$)
-{
-	my($self,$bitmap,$ndr,$name,$varname) = @_;
-	my($type_decl) = mapTypeName($bitmap->{TYPE});
-	my($type_fn) = $bitmap->{BASE_TYPE};
-
-	$self->start_flags($bitmap, $ndr);
-
-	$self->pidl("ndr_print_$type_fn($ndr, name, $varname);");
-
-	$self->pidl("$ndr->depth++;");
-	foreach my $e (@{$bitmap->{ELEMENTS}}) {
-		$self->ParseBitmapPrintElement($e, $bitmap, $ndr, $name, $varname);
-	}
-	$self->pidl("$ndr->depth--;");
-
-	$self->end_flags($bitmap, $ndr);
-}
 
 sub DeclBitmap($$$$)
 {
@@ -1630,34 +1435,9 @@ $typefamily{BITMAP} = {
 	DECL => \&DeclBitmap,
 	PUSH_FN_BODY => \&ParseBitmapPush,
 	PULL_FN_BODY => \&ParseBitmapPull,
-	PRINT_FN_BODY => \&ParseBitmapPrint,
 };
 
 #####################################################################
-# generate a struct print function
-sub ParseStructPrint($$$$$)
-{
-	my($self,$struct,$ndr,$name,$varname) = @_;
-
-	return unless defined $struct->{ELEMENTS};
-
-	my $env = GenerateStructEnv($struct, $varname);
-
-	$self->DeclareArrayVariables($_) foreach (@{$struct->{ELEMENTS}});
-
-	$self->pidl("ndr_print_struct($ndr, name, \"$name\");");
-	$self->pidl("if (r == NULL) { ndr_print_null($ndr); return; }");
-
-	$self->start_flags($struct, $ndr);
-
-	$self->pidl("$ndr->depth++;");
-	
-	$self->ParseElementPrint($_, $ndr, $env->{$_->{NAME}}, $env)
-		foreach (@{$struct->{ELEMENTS}});
-	$self->pidl("$ndr->depth--;");
-
-	$self->end_flags($struct, $ndr);
-}
 
 sub DeclarePtrVariables($$)
 {
@@ -1846,7 +1626,6 @@ $typefamily{STRUCT} = {
 	PUSH_FN_BODY => \&ParseStructPush,
 	DECL => \&DeclStruct,
 	PULL_FN_BODY => \&ParseStructPull,
-	PRINT_FN_BODY => \&ParseStructPrint,
 	SIZE_FN_BODY => \&ParseStructNdrSize,
 	SIZE_FN_ARGS => \&ArgsStructNdrSize,
 };
@@ -1985,47 +1764,6 @@ sub ParseUnionPush($$$$)
 }
 
 #####################################################################
-# print a union
-sub ParseUnionPrint($$$$$)
-{
-	my ($self,$e,$ndr,$name,$varname) = @_;
-	my $have_default = 0;
-
-	$self->pidl("uint32_t level;");
-	foreach my $el (@{$e->{ELEMENTS}}) {
-		$self->DeclareArrayVariables($el);
-	}
-
-	$self->start_flags($e, $ndr);
-
-	$self->pidl("level = ndr_print_get_switch_value($ndr, $varname);");
-
-	$self->pidl("ndr_print_union($ndr, name, level, \"$name\");");
-
-	$self->pidl("switch (level) {");
-	$self->indent;
-	foreach my $el (@{$e->{ELEMENTS}}) {
-		if ($el->{CASE} eq "default") {
-			$have_default = 1;
-		}
-		$self->pidl("$el->{CASE}:");
-		if ($el->{TYPE} ne "EMPTY") {
-			$self->indent;
-			$self->ParseElementPrint($el, $ndr, "$varname->$el->{NAME}", {});
-			$self->deindent;
-		}
-		$self->pidl("break;");
-		$self->pidl("");
-	}
-	if (! $have_default) {
-		$self->pidl("default:");
-		$self->pidl("\tndr_print_bad_level($ndr, name, level);");
-	}
-	$self->deindent;
-	$self->pidl("}");
-
-	$self->end_flags($e, $ndr);
-}
 
 sub ParseUnionPullPrimitives($$$$$)
 {
@@ -2188,7 +1926,6 @@ $typefamily{UNION} = {
 	PUSH_FN_BODY => \&ParseUnionPush,
 	DECL => \&DeclUnion,
 	PULL_FN_BODY => \&ParseUnionPull,
-	PRINT_FN_BODY => \&ParseUnionPrint,
 	SIZE_FN_ARGS => \&ArgsUnionNdrSize,
 	SIZE_FN_BODY => \&ParseUnionNdrSize,
 };
@@ -2220,15 +1957,6 @@ sub ParseTypedefPull($$$$)
 }
 
 #####################################################################
-# parse a typedef - print side
-sub ParseTypedefPrint($$$$$)
-{
-	my($self,$e,$ndr,$name,$varname) = @_;
-
-	$typefamily{$e->{DATA}->{TYPE}}->{PRINT_FN_BODY}->($self, $e->{DATA}, $ndr, $name, $varname);
-}
-
-#####################################################################
 ## calculate the size of a structure
 sub ParseTypedefNdrSize($$$$)
 {
@@ -2254,7 +1982,6 @@ $typefamily{TYPEDEF} = {
 	PUSH_FN_BODY => \&ParseTypedefPush,
 	DECL => \&DeclTypedef,
 	PULL_FN_BODY => \&ParseTypedefPull,
-	PRINT_FN_BODY => \&ParseTypedefPrint,
 	SIZE_FN_ARGS => \&ArgsTypedefNdrSize,
 	SIZE_FN_BODY => \&ParseTypedefNdrSize,
 };
@@ -2320,100 +2047,6 @@ sub ParsePipePullChunk($$)
 	$self->pidl("");
 
 	$self->pidl("return NDR_ERR_SUCCESS;");
-	$self->deindent;
-	$self->pidl("}");
-	$self->pidl("");
-}
-
-sub ParsePipePrintChunk($$)
-{
-	my ($self, $t) = @_;
-
-	my $pipe = $t;
-	$pipe = $t->{DATA} if ($t->{TYPE} eq "TYPEDEF");
-	my $struct = $pipe->{DATA};
-
-	my $name = "$struct->{NAME}";
-	my $ndr = "ndr";
-	my $varname = "r";
-
-	my $args = $typefamily{$struct->{TYPE}}->{DECL}->($struct, "print", $name, $varname);
-
-	$self->pidl_hdr("void ndr_print_$name(struct ndr_print *ndr, const char *name, $args);");
-
-	return if (has_property($t, "noprint"));
-
-	$self->pidl("_PUBLIC_ void ndr_print_$name(struct ndr_print *$ndr, const char *name, $args)");
-	$self->pidl("{");
-	$self->indent;
-	$self->ParseTypePrint($struct, $ndr, $varname);
-	$self->deindent;
-	$self->pidl("}");
-	$self->pidl("");
-}
-
-#####################################################################
-# parse a function - print side
-sub ParseFunctionPrint($$)
-{
-	my($self, $fn) = @_;
-	my $ndr = "ndr";
-
-	$self->pidl_hdr("void ndr_print_$fn->{NAME}(struct ndr_print *$ndr, const char *name, int flags, const struct $fn->{NAME} *r);");
-
-	return if has_property($fn, "noprint");
-
-	$self->pidl("_PUBLIC_ void ndr_print_$fn->{NAME}(struct ndr_print *$ndr, const char *name, int flags, const struct $fn->{NAME} *r)");
-	$self->pidl("{");
-	$self->indent;
-
-	foreach my $e (@{$fn->{ELEMENTS}}) {
-		$self->DeclareArrayVariables($e);
-	}
-
-	$self->pidl("ndr_print_struct($ndr, name, \"$fn->{NAME}\");");
-	$self->pidl("if (r == NULL) { ndr_print_null($ndr); return; }");
-	$self->pidl("$ndr->depth++;");
-
-	$self->pidl("if (flags & NDR_SET_VALUES) {");
-	$self->pidl("\t$ndr->flags |= LIBNDR_PRINT_SET_VALUES;");
-	$self->pidl("}");
-
-	$self->pidl("if (flags & NDR_IN) {");
-	$self->indent;
-	$self->pidl("ndr_print_struct($ndr, \"in\", \"$fn->{NAME}\");");
-	$self->pidl("$ndr->depth++;");
-
-	my $env = GenerateFunctionInEnv($fn);
-
-	foreach my $e (@{$fn->{ELEMENTS}}) {
-		if (grep(/in/,@{$e->{DIRECTION}})) {
-			$self->ParseElementPrint($e, $ndr, $env->{$e->{NAME}}, $env);
-		}
-	}
-	$self->pidl("$ndr->depth--;");
-	$self->deindent;
-	$self->pidl("}");
-	
-	$self->pidl("if (flags & NDR_OUT) {");
-	$self->indent;
-	$self->pidl("ndr_print_struct($ndr, \"out\", \"$fn->{NAME}\");");
-	$self->pidl("$ndr->depth++;");
-
-	$env = GenerateFunctionOutEnv($fn);
-	foreach my $e (@{$fn->{ELEMENTS}}) {
-		if (grep(/out/,@{$e->{DIRECTION}})) {
-			$self->ParseElementPrint($e, $ndr, $env->{$e->{NAME}}, $env);
-		}
-	}
-	if ($fn->{RETURN_TYPE}) {
-		$self->pidl("ndr_print_$fn->{RETURN_TYPE}($ndr, \"result\", r->out.result);");
-	}
-	$self->pidl("$ndr->depth--;");
-	$self->deindent;
-	$self->pidl("}");
-	
-	$self->pidl("$ndr->depth--;");
 	$self->deindent;
 	$self->pidl("}");
 	$self->pidl("");
@@ -2672,7 +2305,6 @@ sub ParseGeneratePipeArray($$$)
 		$self->pidl("sizeof(struct $cname),");
 		$self->pidl("(ndr_push_flags_fn_t) ndr_push_$cname,");
 		$self->pidl("(ndr_pull_flags_fn_t) ndr_pull_$cname,");
-		$self->pidl("(ndr_print_fn_t) ndr_print_$cname,");
 		$self->deindent;
 		$self->pidl("},");
 	}
@@ -2745,7 +2377,6 @@ sub FunctionCallEntry($$)
 	$self->pidl("\t\tsizeof(struct $d->{NAME}),");
 	$self->pidl("\t\t(ndr_push_flags_fn_t) ndr_push_$d->{NAME},");
 	$self->pidl("\t\t(ndr_pull_flags_fn_t) ndr_pull_$d->{NAME},");
-	$self->pidl("\t\t(ndr_print_function_t) ndr_print_$d->{NAME},");
 	$self->pidl("\t\t{ $in_pipes, $in_pipes_ptr },");
 	$self->pidl("\t\t{ $out_pipes, $out_pipes_ptr },");
 	$self->pidl("\t},");
@@ -2959,33 +2590,6 @@ sub ParseTypePullFunction($$)
 	$self->pidl("");
 }
 
-sub ParseTypePrint($$$$)
-{
-	my ($self, $e, $ndr, $varname) = @_;
-
-	$typefamily{$e->{TYPE}}->{PRINT_FN_BODY}->($self, $e, $ndr, $e->{NAME}, $varname);
-}
-
-sub ParseTypePrintFunction($$$)
-{
-	my ($self, $e, $varname) = @_;
-	my $ndr = "ndr";
-
-	my $args = $typefamily{$e->{TYPE}}->{DECL}->($e, "print", $e->{NAME}, $varname);
-
-	$self->pidl_hdr("void ".TypeFunctionName("ndr_print", $e)."(struct ndr_print *ndr, const char *name, $args);");
-
-	return if (has_property($e, "noprint"));
-
-	$self->pidl("_PUBLIC_ void ".TypeFunctionName("ndr_print", $e)."(struct ndr_print *$ndr, const char *name, $args)");
-	$self->pidl("{");
-	$self->indent;
-	$self->ParseTypePrint($e, $ndr, $varname);
-	$self->deindent;
-	$self->pidl("}");
-	$self->pidl("");
-}
-
 sub ParseTypeNdrSize($$)
 {
 	my ($self,$t) = @_;
@@ -3024,12 +2628,9 @@ sub ParseInterface($$$)
 				$self->ParsePipePushChunk($d);
 			($needed->{TypeFunctionName("ndr_pull", $d)}) &&
 				$self->ParsePipePullChunk($d);
-			($needed->{TypeFunctionName("ndr_print", $d)}) &&
-				$self->ParsePipePrintChunk($d);
 
 			$needed->{TypeFunctionName("ndr_pull", $d)} = 0;
 			$needed->{TypeFunctionName("ndr_push", $d)} = 0;
-			$needed->{TypeFunctionName("ndr_print", $d)} = 0;
 			next;
 		}
 
@@ -3037,12 +2638,10 @@ sub ParseInterface($$$)
 
 		($needed->{TypeFunctionName("ndr_push", $d)}) && $self->ParseTypePushFunction($d, "r");
 		($needed->{TypeFunctionName("ndr_pull", $d)}) && $self->ParseTypePullFunction($d, "r");
-		($needed->{TypeFunctionName("ndr_print", $d)}) && $self->ParseTypePrintFunction($d, "r");
 
 		# Make sure we don't generate a function twice...
 		$needed->{TypeFunctionName("ndr_push", $d)} = 
-		    $needed->{TypeFunctionName("ndr_pull", $d)} = 
-			$needed->{TypeFunctionName("ndr_print", $d)} = 0;
+		    $needed->{TypeFunctionName("ndr_pull", $d)} = 0;
 
 		($needed->{"ndr_size_$d->{NAME}"}) && $self->ParseTypeNdrSize($d);
 	}
@@ -3051,7 +2650,6 @@ sub ParseInterface($$$)
 	foreach my $d (@{$interface->{FUNCTIONS}}) {
 		($needed->{"ndr_push_$d->{NAME}"}) && $self->ParseFunctionPush($d);
 		($needed->{"ndr_pull_$d->{NAME}"}) && $self->ParseFunctionPull($d);
-		($needed->{"ndr_print_$d->{NAME}"}) && $self->ParseFunctionPrint($d);
 	}
 
 	$self->FunctionTable($interface);
@@ -3135,9 +2733,7 @@ sub NeededElement($$$)
 	die ("$e->{NAME} $t, $rt FOO") unless ($rt ne "");
 
 	my @fn = ();
-	if ($dir eq "print") {
-		push(@fn, TypeFunctionName("ndr_print", $e->{REPRESENTATION_TYPE}));
-	} elsif ($dir eq "pull") {
+	if ($dir eq "pull") {
 		push (@fn, TypeFunctionName("ndr_pull", $e->{TYPE}));
 		push (@fn, "ndr_$t\_to_$rt")
 			if ($rt ne $t);
@@ -3161,10 +2757,9 @@ sub NeededFunction($$)
 	my ($fn,$needed) = @_;
 	$needed->{"ndr_pull_$fn->{NAME}"} = 1;
 	$needed->{"ndr_push_$fn->{NAME}"} = 1;
-	$needed->{"ndr_print_$fn->{NAME}"} = 1;
 	foreach my $e (@{$fn->{ELEMENTS}}) {
 		$e->{PARENT} = $fn;
-		NeededElement($e, $_, $needed) foreach ("pull", "push", "print");
+		NeededElement($e, $_, $needed) foreach ("pull", "push");
 	}
 }
 
@@ -3198,13 +2793,11 @@ sub NeededInterface($$)
 	foreach (reverse @{$interface->{TYPES}}) {
 
 		if (has_property($_, "public")) {
-			$needed->{TypeFunctionName("ndr_pull", $_)} = $needed->{TypeFunctionName("ndr_push", $_)} = 
-				$needed->{TypeFunctionName("ndr_print", $_)} = 1;
+			$needed->{TypeFunctionName("ndr_pull", $_)} = $needed->{TypeFunctionName("ndr_push", $_)} = 1;
 		}
 
 		NeededType($_, $needed, "pull") if ($needed->{TypeFunctionName("ndr_pull", $_)});
 		NeededType($_, $needed, "push") if ($needed->{TypeFunctionName("ndr_push", $_)});
-		NeededType($_, $needed, "print") if ($needed->{TypeFunctionName("ndr_print", $_)});
 		if (has_property($_, "gensize")) {
 			$needed->{"ndr_size_$_->{NAME}"} = 1;
 		}

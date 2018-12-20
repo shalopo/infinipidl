@@ -2670,15 +2670,8 @@ sub GenerateIncludes($)
 	if (is_intree()) {
 		$self->pidl("#include \"includes.h\"");
 	} else {
-		$self->pidl("#ifndef _GNU_SOURCE");
-		$self->pidl("#define _GNU_SOURCE");
-		$self->pidl("#endif");
-		$self->pidl("#include <stdint.h>");
-		$self->pidl("#include <stdlib.h>");
-		$self->pidl("#include <stdio.h>");
-		$self->pidl("#include <stdbool.h>");
-		$self->pidl("#include <stdarg.h>");
-		$self->pidl("#include <string.h>");
+		$self->pidl("#include \"nas/modules/smb/ndr/ndr_input.hpp\"");
+		$self->pidl("#include \"nas/modules/smb/ndr/ndr_output.hpp\"");
 	}
 }
 
@@ -2699,6 +2692,8 @@ sub Parse($$$$)
 	$self->GenerateIncludes();
 	$self->pidl("#include \"$ndr_header\"") if ($ndr_header);
 	$self->pidl("");
+    $self->pidl("using namespace nas::smb;");
+    $self->pidl("");
 
 	my %needed = ();
 

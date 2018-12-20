@@ -479,7 +479,7 @@ my($opt_tdr_parser);
 my($opt_ws_parser);
 my($opt_python);
 my($opt_quiet) = 0;
-my($opt_outputdir) = '.';
+my($opt_outputdir);
 my($opt_verbose) = 0;
 my($opt_warn_compat) = 0;
 my($opt_dcom_proxy);
@@ -515,8 +515,8 @@ Debugging:
  --typelib               print type information
 
 Samba 4 output:
- --header[=OUTFILE]      create generic header file [BASENAME.h]
- --ndr-parser[=OUTFILE]  create a C NDR parser [ndr_BASENAME.c]
+ --header[=OUTFILE]      create generic header file [BASENAME.hpp]
+ --ndr-parser[=OUTFILE]  create a C NDR parser [BASENAME_ndr.cpp]
  --client[=OUTFILE]      create a C NDR client [ndr_BASENAME_c.c]
  --tdr-parser[=OUTFILE]  create a C TDR parser [tdr_BASENAME.c]
  --python[=OUTFILE]      create python wrapper file [py_BASENAME.c]
@@ -592,7 +592,8 @@ if ($opt_version) {
 sub process_file($)
 {
 	my $idl_file = shift;
-	my $outputdir = $opt_outputdir;
+
+	my $outputdir = dirname($idl_file)."/../";
 	my $pidl;
 	my $ndr;
 
@@ -687,7 +688,7 @@ sub process_file($)
 		SaveStructure($ndr_file, $ndr) or die "Failed to save $ndr_file\n";
 	}
 
-	my $gen_header = ($opt_header or "$outputdir/$basename.h");
+	my $gen_header = ($opt_header or "$outputdir/include/$basename.hpp");
 	if (defined($opt_header)) {
 		require Parse::Pidl::Samba4::Header;
 		FileSave($gen_header, Parse::Pidl::Samba4::Header::Parse($ndr));
@@ -724,14 +725,12 @@ sub process_file($)
 	}
 
 	if (defined($opt_ndr_parser)) {
-		my $parser_fname = ($opt_ndr_parser or "$outputdir/ndr_$basename.c");
+		my $parser_fname = ($opt_ndr_parser or "$outputdir/ndr_autogen/$basename\_ndr.cpp");
 		require Parse::Pidl::Samba4::NDR::Parser;
 		my $generator = new Parse::Pidl::Samba4::NDR::Parser();
 		my ($header,$parser) = $generator->Parse($ndr, $gen_header, $h_filename);
 
 		FileSave($parser_fname, $parser);
-		FileSave($h_filename, $header);
-
 	}
 
 	if (defined($opt_ws_parser)) {
@@ -794,6 +793,7 @@ sub process_file($)
 		FileSave($header, $h_code);
 	}
 
+	unless ($opt_quiet) { print "Done compiling $idl_file\n"; }
 }
 
 if (scalar(@ARGV) == 0) {
@@ -801,4 +801,17 @@ if (scalar(@ARGV) == 0) {
 	exit(1);
 }
 
-process_file($_) foreach (@ARGV);
+foreach (@ARGV) {
+	my $path = $_;
+	if (opendir(my $dh, $path)) {
+		while (readdir $dh) {
+			if ($_ =~ ".idl") {
+				process_file($path . $_);
+			}
+		}
+		closedir $dh;
+	} else {
+		process_file($path);
+	}
+}
+print("Done.");

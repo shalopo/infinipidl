@@ -12,7 +12,7 @@ require Exporter;
 
 use strict;
 use Parse::Pidl qw(fatal);
-use Parse::Pidl::Typelist qw(mapTypeName scalar_is_reference);
+use Parse::Pidl::Typelist qw(mapTypeName scalar_is_reference enum_type_fn);
 use Parse::Pidl::Util qw(has_property is_constant unmake_str ParseExpr);
 use Parse::Pidl::Samba4 qw(is_intree ElementStars ArrayBrackets choose_header);
 
@@ -21,6 +21,10 @@ $VERSION = '0.01';
 
 my($res);
 my($tab_depth);
+my(@bitmaps);
+my(@union_switch_types);
+my(@default_enums);
+my $services_ns = "nas::smb::dcerpc::services";
 
 sub pidl($) { $res .= shift; }
 
@@ -48,7 +52,7 @@ sub HeaderProperties($$)
 	}
 
 	if ($ret) {
-		pidl "/* [" . substr($ret, 0, -1) . "] */";
+		pidl " // [" . substr($ret, 0, -1) . "]";
 	}
 }
 
@@ -84,10 +88,10 @@ sub HeaderElement($)
 sub HeaderStruct($$;$)
 {
 	my($struct,$name,$tail) = @_;
-	pidl "struct $name";
-	pidl $tail if defined($tail) and not defined($struct->{ELEMENTS});
+	pidl tabs(). "struct $name";
+	pidl tabs(). $tail if defined($tail) and not defined($struct->{ELEMENTS});
 	return if (not defined($struct->{ELEMENTS}));
-	pidl " {\n";
+	pidl tabs(). "\n{\n";
 	$tab_depth++;
 	my $el_count=0;
 	foreach (@{$struct->{ELEMENTS}}) {
@@ -99,7 +103,7 @@ sub HeaderStruct($$;$)
 		pidl tabs()."char _empty_;\n";
 	}
 	$tab_depth--;
-	pidl tabs()."}";
+	pidl tabs()."};";
 	if (defined $struct->{PROPERTIES}) {
 		HeaderProperties($struct->{PROPERTIES}, []);
 	}
@@ -113,57 +117,26 @@ sub HeaderEnum($$;$)
 	my($enum,$name,$tail) = @_;
 	my $first = 1;
 
-	pidl "enum $name";
-	if (defined($enum->{ELEMENTS})) {
-		pidl "\n#ifndef USE_UINT_ENUMS\n";
-		pidl " {\n";
-		$tab_depth++;
-		foreach my $e (@{$enum->{ELEMENTS}}) {
-			my @enum_els = ();
-			unless ($first) { pidl ",\n"; }
-			$first = 0;
-			pidl tabs();
-			@enum_els = split(/=/, $e);
-			if (@enum_els == 2) {
-				pidl $enum_els[0];
-				pidl "=(int)";
-				pidl "(";
-				pidl $enum_els[1];
-				pidl ")";
-			} else {
-				pidl $e;
-			}
+	push @default_enums, $name if (enum_type_fn($enum) eq "uint1632");
+
+	pidl "enum class $name : ".mapTypeName($enum->{BASE_TYPE})."\n{\n";
+	$tab_depth++;
+	foreach my $e (@{$enum->{ELEMENTS}}) {
+		my @enum_els = ();
+		unless ($first) { pidl ",\n"; }
+		$first = 0;
+		pidl tabs();
+		@enum_els = split(/=/, $e);
+		if (@enum_els == 2) {
+			pidl $enum_els[0];
+			pidl " = ".$enum_els[1];
+		} else {
+			pidl $e;
 		}
-		pidl "\n";
-		$tab_depth--;
-		pidl "}";
-		pidl "\n";
-		pidl "#else\n";
-		my $count = 0;
-		my $with_val = 0;
-		my $without_val = 0;
-		pidl " { __do_not_use_enum_$name=0x7FFFFFFF}\n";
-		foreach my $e (@{$enum->{ELEMENTS}}) {
-			my $t = "$e";
-			my $name;
-			my $value;
-			if ($t =~ /(.*)=(.*)/) {
-				$name = $1;
-				$value = $2;
-				$with_val = 1;
-				fatal($e->{ORIGINAL}, "you can't mix enum member with values and without values!")
-					unless ($without_val == 0);
-			} else {
-				$name = $t;
-				$value = $count++;
-				$without_val = 1;
-				fatal($e->{ORIGINAL}, "you can't mix enum member with values and without values!")
-					unless ($with_val == 0);
-			}
-			pidl "#define $name ( $value )\n";
-		}
-		pidl "#endif\n";
 	}
+	pidl "\n";
+	$tab_depth--;
+	pidl "};";
 	pidl $tail if defined($tail);
 }
 
@@ -172,12 +145,21 @@ sub HeaderEnum($$;$)
 sub HeaderBitmap($$)
 {
 	my($bitmap,$name) = @_;
+	push @bitmaps, $name;
 
-	return unless defined($bitmap->{ELEMENTS});
+	pidl "enum class $name : ".mapTypeName($bitmap->{BASE_TYPE})."\n{";
+	$tab_depth++;
 
-	pidl "/* bitmap $name */\n";
-	pidl "#define $_\n" foreach (@{$bitmap->{ELEMENTS}});
-	pidl "\n";
+	my $first = 1;
+	foreach (@{$bitmap->{ELEMENTS}})
+	{
+		my ($element_name, $element_value) = ($_ =~ m/([^\s]+)\s*\(\s*([^\s]+)\s*\)/);
+		pidl "," unless ($first);
+		pidl "\n".tabs()."$element_name = $element_value";
+		$first = 0;
+	}
+	$tab_depth--;
+	pidl "\n};\n\n";
 }
 
 #####################################################################
@@ -202,17 +184,18 @@ sub HeaderUnion($$;$)
 			$needed++;
 		}
 	}
-	if (!$needed) {
-		# sigh - some compilers don't like empty structures
-		pidl tabs()."int _dummy_element;\n";
-	}
+
 	$tab_depth--;
-	pidl "}";
+	pidl "};";
 
 	if (defined $union->{PROPERTIES}) {
 		HeaderProperties($union->{PROPERTIES}, []);
 	}
 	pidl $tail if defined($tail);
+
+	if (mapTypeName($union->{SWITCH_TYPE}) ne "uint32_t") { # uint32_t is default - avoid specifying it
+		push @union_switch_types, { NAME => $name, SWITCH_TYPE => $union->{SWITCH_TYPE} }
+	}
 }
 
 #####################################################################
@@ -254,7 +237,7 @@ sub HeaderType($$$;$)
 	}
 
 	if (has_property($e, "charset")) {
-		pidl "const char";
+		pidl "char";
 	} else {
 		pidl mapTypeName($e->{TYPE});
 	}
@@ -276,11 +259,7 @@ sub HeaderTypedef($;$)
 sub HeaderConst($)
 {
 	my($const) = shift;
-	if (!defined($const->{ARRAY_LEN}[0])) {
-		pidl "#define $const->{NAME}\t( $const->{VALUE} )\n";
-	} else {
-		pidl "#define $const->{NAME}\t $const->{VALUE}\n";
-	}
+	pidl "static constexpr ".mapTypeName($const->{DTYPE})." $const->{NAME}\t = $const->{VALUE};\n";
 }
 
 sub ElementDirection($)
@@ -335,24 +314,28 @@ sub HeaderFunction($)
 
 	$headerstructs{$fn->{NAME}} = 1;
 
-	pidl "\nstruct $fn->{NAME} {\n";
+	pidl tabs(). "struct $fn->{NAME}\n";
+	pidl tabs(). "{\n";
 	$tab_depth++;
 	my $needed = 0;
 
-	if (HeaderFunctionInOut_needed($fn, "in") or
-	    HeaderFunctionInOut_needed($fn, "inout")) {
-		pidl tabs()."struct {\n";
+	my $in_needed = 1; # HeaderFunctionInOut_needed($fn, "in") or HeaderFunctionInOut_needed($fn, "inout");
+	my $out_needed = 1; #HeaderFunctionInOut_needed($fn, "out") or HeaderFunctionInOut_needed($fn, "inout");
+
+	if ($in_needed) {
+		pidl tabs()."struct In\n";
+		pidl tabs()."{\n";
 		$tab_depth++;
 		HeaderFunctionInOut($fn, "in");
 		HeaderFunctionInOut($fn, "inout");
 		$tab_depth--;
-		pidl tabs()."} in;\n\n";
+		pidl tabs()."};\n\n";
 		$needed++;
 	}
 
-	if (HeaderFunctionInOut_needed($fn, "out") or
-	    HeaderFunctionInOut_needed($fn, "inout")) {
-		pidl tabs()."struct {\n";
+	# if ($out_needed) {
+		pidl tabs()."struct Out\n";
+		pidl tabs()."{\n";
 		$tab_depth++;
 		HeaderFunctionInOut($fn, "out");
 		HeaderFunctionInOut($fn, "inout");
@@ -360,17 +343,12 @@ sub HeaderFunction($)
 			pidl tabs().mapTypeName($fn->{RETURN_TYPE}) . " result;\n";
 		}
 		$tab_depth--;
-		pidl tabs()."} out;\n\n";
+		pidl tabs()."};\n";
 		$needed++;
-	}
-
-	if (!$needed) {
-		# sigh - some compilers don't like empty structures
-		pidl tabs()."int _dummy_element;\n";
-	}
+	# }
 
 	$tab_depth--;
-	pidl "};\n\n";
+	pidl tabs(). "};\n\n";
 }
 
 sub HeaderImport
@@ -379,15 +357,16 @@ sub HeaderImport
 	foreach my $import (@imports) {
 		$import = unmake_str($import);
 		$import =~ s/\.idl$//;
-		pidl choose_header("librpc/gen_ndr/$import\.h", "gen_ndr/$import.h") . "\n";
+		pidl  "#include \"$import.hpp\"\n";
 	}
+	pidl "\n";
 }
 
 sub HeaderInclude
 {
 	my @includes = @_;
 	foreach (@includes) {
-		pidl "#include $_\n";
+		pidl "#include \"$_\"\n";
 	}
 }
 
@@ -397,27 +376,72 @@ sub HeaderInterface($)
 {
 	my($interface) = shift;
 
-	pidl "#ifndef _HEADER_$interface->{NAME}\n";
-	pidl "#define _HEADER_$interface->{NAME}\n\n";
+	@bitmaps = ();
+	@union_switch_types = ();
+	@default_enums = ();
+
+	pidl "\n";
+	pidl "namespace $services_ns::$interface->{NAME} {\n\n";
 
 	foreach my $c (@{$interface->{CONSTS}}) {
 		HeaderConst($c);
 	}
 
+	pidl "\n";
+
 	foreach my $t (@{$interface->{TYPES}}) {
-		HeaderTypedef($t, ";\n\n") if ($t->{TYPE} eq "TYPEDEF");
-		HeaderStruct($t, $t->{NAME}, ";\n\n") if ($t->{TYPE} eq "STRUCT");
-		HeaderUnion($t, $t->{NAME}, ";\n\n") if ($t->{TYPE} eq "UNION");
-		HeaderEnum($t, $t->{NAME}, ";\n\n") if ($t->{TYPE} eq "ENUM");
-		HeaderBitmap($t, $t->{NAME}) if ($t->{TYPE} eq "BITMAP");
-		HeaderPipe($t, $t->{NAME}, "\n\n") if ($t->{TYPE} eq "PIPE");
+		die("Please use typedef instead of direct type $t->{NAME}") if ($t->{TYPE} ne "TYPEDEF");
+		HeaderTypedef($t, "\n\n");
+		# HeaderStruct($t, $t->{NAME}, ";\n\n") if ($t->{TYPE} eq "STRUCT");
+		# HeaderUnion($t, $t->{NAME}, ";\n\n") if ($t->{TYPE} eq "UNION");
+		# HeaderEnum($t, $t->{NAME}, ";\n\n") if ($t->{TYPE} eq "ENUM");
+		# HeaderBitmap($t, $t->{NAME}) if ($t->{TYPE} eq "BITMAP");
+		# HeaderPipe($t, $t->{NAME}, "\n\n") if ($t->{TYPE} eq "PIPE");
 	}
 
 	foreach my $fn (@{$interface->{FUNCTIONS}}) {
 		HeaderFunction($fn);
 	}
 
-	pidl "#endif /* _HEADER_$interface->{NAME} */\n";
+	pidl "} // namespace $services_ns::$interface->{NAME}\n";
+
+	if (@union_switch_types or @default_enums)
+	{
+		pidl "\n";
+		pidl "namespace nas::smb::dcerpc {\n";
+
+		pidl "\n" if (@union_switch_types);
+		foreach (@union_switch_types) {
+			my $union_type_name = $_->{NAME};
+			my $switch_type_name = $_->{SWITCH_TYPE};
+
+			if (Parse::Pidl::Typelist::is_primitive_scalar($switch_type_name)) {
+				$switch_type_name = mapTypeName($switch_type_name);
+			}
+			else {
+				$switch_type_name = "$services_ns::$interface->{NAME}::$switch_type_name";
+			}
+
+			pidl "template<> struct DceRpcUnionSwitchType<$services_ns::$interface->{NAME}::$union_type_name> { using type = $switch_type_name; };\n";
+		}
+
+		pidl "\n" if (@default_enums);
+		foreach (@default_enums) {
+			pidl "template<> struct IsDceRpcDefaultFormatEnum<$services_ns::$interface->{NAME}::$_> { static constexpr bool value = true; };\n";
+		}
+
+		pidl "\n";
+		pidl "} // namespace nas::smb::dcerpc\n";
+	}
+
+	if (@bitmaps)
+	{
+		pidl "\n";
+		foreach my $bitmap (@bitmaps) {
+			pidl "template<> struct EnableEnumFlags<$services_ns::$interface->{NAME}::$bitmap> {};\n";
+		}
+		pidl "\n";
+	}
 }
 
 sub HeaderQuote($)
@@ -436,7 +460,7 @@ sub Parse($)
 
 	$res = "";
 	%headerstructs = ();
-	pidl "/* header auto-generated by pidl */\n\n";
+	pidl "// auto-generated by infinipidl\n\n";
 
 	my $ifacename = "";
 
@@ -448,17 +472,17 @@ sub Parse($)
 		}
 	}
 
-	pidl "#ifndef _PIDL_HEADER_$ifacename\n";
-	pidl "#define _PIDL_HEADER_$ifacename\n\n";
+	pidl "#pragma once\n\n";
 
-	if (!is_intree()) {
-		pidl "#include <util/data_blob.h>\n";
-	}
-	pidl "#include <stdint.h>\n";
-	pidl "\n";
-	# FIXME: Include this only if NTSTATUS was actually used
-	pidl choose_header("libcli/util/ntstatus.h", "core/ntstatus.h") . "\n";
-	pidl "\n";
+	# if (!is_intree()) {
+	# 	pidl "#include <util/data_blob.h>\n";
+	# }
+	# # FIXME: Include this only if NTSTATUS was actually used
+	# pidl choose_header("libcli/util/ntstatus.h", "core/ntstatus.h") . "\n";
+
+	HeaderInclude("xinfra/enum_utils.hpp");
+	HeaderInclude("nas/modules/smb/protocol/smb2_proto.hpp");
+	HeaderInclude("nas/modules/smb/dce_rpc/dce_rpc_base_types.hpp");
 
 	foreach (@{$ndr}) {
 		($_->{TYPE} eq "CPP_QUOTE") && HeaderQuote($_);
@@ -466,8 +490,6 @@ sub Parse($)
 		($_->{TYPE} eq "IMPORT") && HeaderImport(@{$_->{PATHS}});
 		($_->{TYPE} eq "INCLUDE") && HeaderInclude(@{$_->{PATHS}});
 	}
-
-	pidl "#endif /* _PIDL_HEADER_$ifacename */\n";
 
 	return $res;
 }
@@ -478,7 +500,7 @@ sub GenerateStructEnv($$)
 	my %env;
 
 	foreach my $e (@{$x->{ELEMENTS}}) {
-		$env{$e->{NAME}} = "$v->$e->{NAME}";
+		$env{$e->{NAME}} = "$v.$e->{NAME}";
 	}
 
 	$env{"this"} = $v;
@@ -505,11 +527,11 @@ sub GenerateFunctionInEnv($;$)
 	my ($fn, $base) = @_;
 	my %env;
 
-	$base = "r->" unless defined($base);
+	$base = "in." unless defined($base);
 
 	foreach my $e (@{$fn->{ELEMENTS}}) {
 		if (grep (/in/, @{$e->{DIRECTION}})) {
-			$env{$e->{NAME}} = $base."in.$e->{NAME}";
+			$env{$e->{NAME}} = $base."$e->{NAME}";
 		}
 	}
 
@@ -521,13 +543,13 @@ sub GenerateFunctionOutEnv($;$)
 	my ($fn, $base) = @_;
 	my %env;
 
-	$base = "r->" unless defined($base);
+	$base = "out." unless defined($base);
 
 	foreach my $e (@{$fn->{ELEMENTS}}) {
 		if (grep (/out/, @{$e->{DIRECTION}})) {
-			$env{$e->{NAME}} = $base."out.$e->{NAME}";
+			$env{$e->{NAME}} = "out.$e->{NAME}";
 		} elsif (grep (/in/, @{$e->{DIRECTION}})) {
-			$env{$e->{NAME}} = $base."in.$e->{NAME}";
+			$env{$e->{NAME}} = "in.$e->{NAME}";
 		}
 	}
 

@@ -135,6 +135,21 @@ sub deindent($)
 	$self->{tabs} = substr($self->{tabs}, 0, -1);
 }
 
+sub start_block($)
+{
+	my ($self) = @_;
+    $self->pidl("{");
+    $self->indent();
+}
+
+sub end_block($)
+{
+	my ($self) = @_;
+    $self->deindent();
+    $self->pidl("}");
+    $self->pidl("");
+}
+
 #####################################################################
 # declare a function public or static, depending on its attributes
 sub fn_declare($$$$)
@@ -501,7 +516,7 @@ sub ParseCompressionPushStart($$$$$)
 
 	$self->pidl("{");
 	$self->indent;
-	$self->pidl("struct ndr_push *$comndr;");
+	$self->pidl("NdrOutput& $comndr;");
 	$self->pidl("NDR_CHECK(ndr_push_compression_start($ndr, &$comndr, $alg, $dlen));");
 
 	return $comndr;
@@ -529,7 +544,7 @@ sub ParseCompressionPullStart($$$$$)
 
 	$self->pidl("{");
 	$self->indent;
-	$self->pidl("struct ndr_pull *$comndr;");
+	$self->pidl("NdrInput& $comndr;");
 	$self->pidl("NDR_CHECK(ndr_pull_compression_start($ndr, &$comndr, $alg, $dlen, $clen));");
 
 	return $comndr;
@@ -555,7 +570,7 @@ sub ParseSubcontextPushStart($$$$$)
 
 	$self->pidl("{");
 	$self->indent;
-	$self->pidl("struct ndr_push *$subndr;");
+	$self->pidl("NdrOutput& $subndr;");
 	$self->pidl("NDR_CHECK(ndr_push_subcontext_start($ndr, &$subndr, $l->{HEADER_SIZE}, $subcontext_size));");
 
 	if (defined $l->{COMPRESSION}) {
@@ -588,7 +603,7 @@ sub ParseSubcontextPullStart($$$$$)
 
 	$self->pidl("{");
 	$self->indent;
-	$self->pidl("struct ndr_pull *$subndr;");
+	$self->pidl("NdrInput& $subndr;");
 	$self->pidl("NDR_CHECK(ndr_pull_subcontext_start($ndr, &$subndr, $l->{HEADER_SIZE}, $subcontext_size));");
 
 	if (defined $l->{COMPRESSION}) {
@@ -2000,7 +2015,7 @@ sub ParsePipePushChunk($$)
 
 	my $args = $typefamily{$struct->{TYPE}}->{DECL}->($struct, "push", $name, $varname);
 
-	$self->fn_declare("push", $struct, "enum ndr_err_code ndr_push_$name(struct ndr_push *$ndr, int ndr_flags, $args)") or return;
+	$self->fn_declare("push", $struct, "enum ndr_err_code ndr_push_$name(NdrOutput& $ndr, int ndr_flags, $args)") or return;
 
 	return if has_property($t, "nopush");
 
@@ -2013,7 +2028,6 @@ sub ParsePipePushChunk($$)
 	$self->pidl("NDR_CHECK(ndr_push_pipe_chunk_trailer(ndr, ndr_flags, $varname->count));");
 	$self->pidl("");
 
-	$self->pidl("return NDR_ERR_SUCCESS;");
 	$self->deindent;
 	$self->pidl("}");
 	$self->pidl("");
@@ -2033,7 +2047,7 @@ sub ParsePipePullChunk($$)
 
 	my $args = $typefamily{$struct->{TYPE}}->{DECL}->($struct, "pull", $name, $varname);
 
-	$self->fn_declare("pull", $struct, "enum ndr_err_code ndr_pull_$name(struct ndr_pull *$ndr, int ndr_flags, $args)") or return;
+	$self->fn_declare("pull", $struct, "enum ndr_err_code ndr_pull_$name(NdrInput& $ndr, int ndr_flags, $args)") or return;
 
 	return if has_property($struct, "nopull");
 
@@ -2046,7 +2060,6 @@ sub ParsePipePullChunk($$)
 	$self->pidl("NDR_CHECK(ndr_check_pipe_chunk_trailer($ndr, ndr_flags, $varname->count));");
 	$self->pidl("");
 
-	$self->pidl("return NDR_ERR_SUCCESS;");
 	$self->deindent;
 	$self->pidl("}");
 	$self->pidl("");
@@ -2059,7 +2072,7 @@ sub ParseFunctionPush($$)
 	my($self, $fn) = @_;
 	my $ndr = "ndr";
 
-	$self->fn_declare("push", $fn, "enum ndr_err_code ndr_push_$fn->{NAME}(struct ndr_push *$ndr, int flags, const struct $fn->{NAME} *r)") or return;
+	$self->fn_declare("push", $fn, "enum ndr_err_code ndr_push_$fn->{NAME}(NdrOutput& $ndr, int flags, const struct $fn->{NAME} *r)") or return;
 
 	return if has_property($fn, "nopush");
 
@@ -2072,8 +2085,8 @@ sub ParseFunctionPush($$)
 
 	$self->pidl("NDR_PUSH_CHECK_FN_FLAGS(ndr, flags);");
 
-	$self->pidl("if (flags & NDR_IN) {");
-	$self->indent;
+	$self->pidl("if (ndr.is_input())");
+	$self->start_block();
 
 	my $env = GenerateFunctionInEnv($fn);
 
@@ -2091,11 +2104,10 @@ sub ParseFunctionPush($$)
 		}
 	}
 
-	$self->deindent;
-	$self->pidl("}");
+	$self->end_block();
 
-	$self->pidl("if (flags & NDR_OUT) {");
-	$self->indent;
+	$self->pidl("if (ndr.is_output())");
+	$self->start_block();
 
 	$env = GenerateFunctionOutEnv($fn);
 	EnvSubstituteValue($env, $fn);
@@ -2118,7 +2130,6 @@ sub ParseFunctionPush($$)
     
 	$self->deindent;
 	$self->pidl("}");
-	$self->pidl("return NDR_ERR_SUCCESS;");
 	$self->deindent;
 	$self->pidl("}");
 	$self->pidl("");
@@ -2154,7 +2165,7 @@ sub ParseFunctionPull($$)
 	my $ndr = "ndr";
 
 	# pull function args
-	$self->fn_declare("pull", $fn, "enum ndr_err_code ndr_pull_$fn->{NAME}(struct ndr_pull *$ndr, int flags, struct $fn->{NAME} *r)") or return;
+	$self->fn_declare("pull", $fn, "enum ndr_err_code ndr_pull_$fn->{NAME}(NdrInput& $ndr, int flags, struct $fn->{NAME} *r)") or return;
 
 	$self->pidl("{");
 	$self->indent;
@@ -2175,8 +2186,8 @@ sub ParseFunctionPull($$)
 
 	$self->pidl("NDR_PULL_CHECK_FN_FLAGS(ndr, flags);");
 
-	$self->pidl("if (flags & NDR_IN) {");
-	$self->indent;
+	$self->pidl("if (ndr.is_input())");
+	$self->start_block();
 
 	# auto-init the out section of a structure. I originally argued that
 	# this was a bad idea as it hides bugs, but coping correctly
@@ -2239,11 +2250,10 @@ sub ParseFunctionPull($$)
 	}
 
 	$self->add_deferred();
-	$self->deindent;
-	$self->pidl("}");
-	
-	$self->pidl("if (flags & NDR_OUT) {");
-	$self->indent;
+	$self->end_block();
+
+	$self->pidl("if (ndr.is_output())");
+	$self->start_block();
 
 	$env = GenerateFunctionOutEnv($fn);
 	foreach my $e (@{$fn->{ELEMENTS}}) {
@@ -2259,7 +2269,6 @@ sub ParseFunctionPull($$)
 	$self->deindent;
 	$self->pidl("}");
 
-	$self->pidl("return NDR_ERR_SUCCESS;");
 	$self->deindent;
 	$self->pidl("}");
 	$self->pidl("");
@@ -2550,12 +2559,11 @@ sub ParseTypePushFunction($$$)
 
 	my $args = $typefamily{$e->{TYPE}}->{DECL}->($e, "push", $e->{NAME}, $varname);
 
-	$self->fn_declare("push", $e, "enum ndr_err_code ".TypeFunctionName("ndr_push", $e)."(struct ndr_push *$ndr, int ndr_flags, $args)") or return;
+	$self->fn_declare("push", $e, "enum ndr_err_code ".TypeFunctionName("ndr_push", $e)."(NdrOutput& $ndr, int ndr_flags, $args)") or return;
 
 	$self->pidl("{");
 	$self->indent;
 	$self->ParseTypePush($e, $ndr, $varname, 1, 1);
-	$self->pidl("return NDR_ERR_SUCCESS;");
 	$self->deindent;
 	$self->pidl("}");
 	$self->pidl("");;
@@ -2579,12 +2587,11 @@ sub ParseTypePullFunction($$)
 
 	my $args = $typefamily{$e->{TYPE}}->{DECL}->($e, "pull", $e->{NAME}, $varname);
 
-	$self->fn_declare("pull", $e, "enum ndr_err_code ".TypeFunctionName("ndr_pull", $e)."(struct ndr_pull *$ndr, int ndr_flags, $args)") or return;
+	$self->fn_declare("pull", $e, "enum ndr_err_code ".TypeFunctionName("ndr_pull", $e)."(NdrInput& $ndr, int ndr_flags, $args)") or return;
 
 	$self->pidl("{");
 	$self->indent;
 	$self->ParseTypePull($e, $ndr, $varname, 1, 1);
-	$self->pidl("return NDR_ERR_SUCCESS;");
 	$self->deindent;
 	$self->pidl("}");
 	$self->pidl("");

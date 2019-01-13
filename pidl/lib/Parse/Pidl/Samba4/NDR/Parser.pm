@@ -30,7 +30,7 @@ my %typefamily;
 
 sub new($$) {
 	my ($class) = @_;
-	my $self = { res => "", res_hdr => "", deferred => [], tabs => "", defer_tabs => "" };
+	my $self = { res => "", res_hdr => "", deferred => [], tabs => "", defer_tabs => "", was_last_line_space => "" };
 	bless($self, $class);
 }
 
@@ -89,9 +89,15 @@ sub pidl($$)
 {
 	my ($self, $d) = @_;
 	if ($d) {
-		$self->{res} .= $self->{tabs};
-		$self->{res} .= $d;
+        $self->{was_last_line_space} = ($d eq "{");
+        $self->{res} .= $self->{tabs};
+        $self->{res} .= $d;
 	}
+    else
+    {
+        return if ($self->{was_last_line_space});
+        $self->{was_last_line_space} = 1;
+    }
 	$self->{res} .="\n";
 }
 

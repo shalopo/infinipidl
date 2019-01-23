@@ -1376,7 +1376,7 @@ sub _Lexer {
 			$parser->YYData->{LAST_TOKEN} = $1;
 			return('NUM',$1);
 		}
-		if (s/^([A-Za-z_][A-Za-z0-9_]*)//) {
+		if (s/^([:A-Za-z_][:A-Za-z0-9_]*)//) {
 			$parser->YYData->{LAST_TOKEN} = $1;
 			return('VAR',$1);
 		}

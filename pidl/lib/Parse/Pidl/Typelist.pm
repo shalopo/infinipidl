@@ -50,18 +50,18 @@ my %scalars = (
 	"udlongr"	=> "uint64_t",
 	"double"	=> "double",
 	"pointer"	=> "void*",
-	"DATA_BLOB"	=> "DATA_BLOB",
+	"DATA_BLOB"	=> "smb::dcerpc::DceRpcBlob",
 	"string"	=> "const char *",
 	"string_array"	=> "const char **",
 	"time_t"	=> "time_t",
 	"uid_t"	        => "uid_t",
 	"gid_t"	        => "gid_t",
-	"NTTIME"	=> "NTTIME",
-	"NTTIME_1sec"	=> "NTTIME",
-	"NTTIME_hyper"	=> "NTTIME",
-	"WERROR"	=> "WERROR",
+	"NTTIME"	=> "uint64_t",
+	"NTTIME_1sec"	=> "uint64_t",
+	"NTTIME_hyper"	=> "uint64_t",
+	"WERROR"	=> "proto::WERROR",
 	"HRESULT"	=> "HRESULT",
-	"NTSTATUS"	=> "NTSTATUS",
+	"NTSTATUS"	=> "proto::SmbStatus",
 	"COMRESULT" => "COMRESULT",
 	"dns_string"	=> "const char *",
 	"nbt_string"	=> "const char *",
@@ -184,6 +184,8 @@ sub is_scalar($)
 	sub is_scalar($);
 	my $type = shift;
 
+	$type = expandAlias($type) if (ref($type) ne "HASH");
+
 	return 1 if (ref($type) eq "HASH" and 
 		($type->{TYPE} eq "SCALAR" or $type->{TYPE} eq "ENUM" or 
 		 $type->{TYPE} eq "BITMAP"));
@@ -192,6 +194,22 @@ sub is_scalar($)
 		return is_scalar($dt->{DATA}) if ($dt->{TYPE} eq "TYPEDEF");
 		return 1 if ($dt->{TYPE} eq "SCALAR" or $dt->{TYPE} eq "ENUM" or 
 			         $dt->{TYPE} eq "BITMAP");
+	}
+
+	return 0;
+}
+
+sub is_primitive_scalar($)
+{
+	my $type = shift;
+
+	$type = expandAlias($type) if (ref($type) ne "HASH");
+
+	return 1 if (ref($type) eq "HASH" and ($type->{TYPE} eq "SCALAR"));
+
+	if (my $dt = getType($type)) {
+		return is_primitive_scalar($dt->{DATA}) if ($dt->{TYPE} eq "TYPEDEF");
+		return 1 if ($dt->{TYPE} eq "SCALAR");
 	}
 
 	return 0;
@@ -288,11 +306,7 @@ sub mapType($$)
 
 	return mapType($t->{DATA}, $n) if ($t->{TYPE} eq "TYPEDEF");
 	return mapScalarType($n) if ($t->{TYPE} eq "SCALAR");
-	return "enum $n" if ($t->{TYPE} eq "ENUM");
-	return "struct $n" if ($t->{TYPE} eq "STRUCT" or $t->{TYPE} eq "INTERFACE");
-	return "union $n" if ($t->{TYPE} eq "UNION");
-	return mapScalarType(bitmap_type_fn($t)) if ($t->{TYPE} eq "BITMAP");
-	return "struct $n" if ($t->{TYPE} eq "PIPE");
+	return $n if ($t->{TYPE} eq "STRUCT" or $t->{TYPE} eq "INTERFACE" or $t->{TYPE} eq "UNION" or $t->{TYPE} eq "PIPE" or $t->{TYPE} eq "ENUM" or $t->{TYPE} eq "BITMAP");
 	die("Unknown type $t->{TYPE}");
 }
 
@@ -309,7 +323,7 @@ sub mapTypeName($)
 		return mapType($t, $t->{NAME});
 	} else {
 		# Best guess
-		return "struct $t";
+		return $t;
 	}
 
 }

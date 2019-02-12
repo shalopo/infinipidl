@@ -237,7 +237,7 @@ sub HeaderType($$$;$)
 	}
 
 	if (has_property($e, "charset")) {
-		pidl "char";
+		pidl "const char";
 	} else {
 		pidl mapTypeName($e->{TYPE});
 	}

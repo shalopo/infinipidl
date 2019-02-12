@@ -585,7 +585,6 @@ sub ParseUnion($$)
 	my $hasdefault = 0;
 	my $switch_type = has_property($e, "switch_type");
 	unless (defined($switch_type)) { $switch_type = "uint32"; }
-	if (has_property($e, "nodiscriminant")) { $switch_type = undef; }
 
 	return {
 		TYPE => "UNION",
@@ -601,6 +600,8 @@ sub ParseUnion($$)
 
 	CheckPointerTypes($e, $pointer_default);
 
+	my $case_prefix = Parse::Pidl::Typelist::is_primitive_scalar($switch_type) ? "" : $switch_type."::";
+
 	foreach my $x (@{$e->{ELEMENTS}}) 
 	{
 		my $t;
@@ -613,7 +614,7 @@ sub ParseUnion($$)
 			$t->{CASE} = "default";
 			$hasdefault = 1;
 		} elsif (defined($x->{PROPERTIES}->{case})) {
-			$t->{CASE} = "case $x->{PROPERTIES}->{case}";
+			$t->{CASE} = "case $case_prefix".$x->{PROPERTIES}->{case};
 		} else {
 			die("Union element $x->{NAME} has neither default nor case property");
 		}

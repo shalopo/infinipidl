@@ -38,7 +38,7 @@ sub assert_unssupported_element($$)
 
 sub new($$) {
 	my ($class) = @_;
-	my $self = { res => "", res_hdr => "", deferred => [], tabs => "", defer_tabs => "", next_switch_var => "", was_last_line_space => "",
+	my $self = { res => "", deferred => [], tabs => "", defer_tabs => "", next_switch_var => "", was_last_line_space => "",
 				 scoped_flags => undef, remaining_blob => 0 };
 	bless($self, $class);
 }
@@ -1603,7 +1603,6 @@ sub ParseUnionPushDeferred($$$$)
 sub ParseUnionPush($$$$$)
 {
 	my ($self,$e,$ndr,$varname, $scope) = @_;
-	my $have_default = 0;
 
 	$self->start_flags($e, $ndr, 0);
 
@@ -1874,7 +1873,10 @@ sub ParseFunctionsPush($$)
 
 	return if has_property($fn, "nopush");
 
-	$self->ParseFunctionPushIn($fn);
+	if ($self->{gen_client_functions}) {
+		$self->ParseFunctionPushIn($fn);
+	}
+
 	$self->ParseFunctionPushOut($fn);
 }
 
@@ -1959,7 +1961,10 @@ sub ParseFunctionsPull($$)
 	my($self, $fn) = @_;
 
 	$self->ParseFunctionPullIn($fn);
-	$self->ParseFunctionPullOut($fn);
+
+	if ($self->{gen_client_functions}) {
+		$self->ParseFunctionPullOut($fn);
+	}
 }
 
 sub ParseFunctionPullIn($$)
@@ -2362,8 +2367,8 @@ sub ParseInterface($$$)
 
 		next unless(typeHasBody($d));
 
-		($needed->{TypeFunctionName("put", $d)}) && $self->ParseTypePushFunction($d, "r");
 		($needed->{TypeFunctionName("get", $d)}) && $self->ParseTypePullFunction($d, "r");
+		($needed->{TypeFunctionName("put", $d)}) && $self->ParseTypePushFunction($d, "r");
 
 		# Make sure we don't generate a function twice...
 		$needed->{TypeFunctionName("put", $d)} = 
@@ -2374,8 +2379,8 @@ sub ParseInterface($$$)
 
 	# Functions
 	foreach my $d (@{$interface->{FUNCTIONS}}) {
-		($needed->{"ndr_push_$d->{NAME}"}) && $self->ParseFunctionsPush($d);
 		($needed->{"ndr_pull_$d->{NAME}"}) && $self->ParseFunctionsPull($d);
+		($needed->{"ndr_push_$d->{NAME}"}) && $self->ParseFunctionsPush($d);
 	}
 
 	# $self->FunctionTable($interface);
@@ -2400,7 +2405,9 @@ sub GenerateIncludes($)
 # parse a parsed IDL structure back into an IDL file
 sub Parse($$$$)
 {
-	my($self, $ndr,$gen_header,$ndr_header) = @_;
+	my($self, $ndr,$gen_header,$gen_client_functions) = @_;
+
+	$self->{gen_client_functions} = $gen_client_functions;
 
 	use File::Basename;
 
@@ -2430,7 +2437,7 @@ sub Parse($$$$)
 		($_->{TYPE} eq "INTERFACE") && $self->ParseInterface($_, \%needed);
 	}
 
-	return ($self->{res_hdr}, $self->{res});
+	return $self->{res};
 }
 
 sub NeededElement($$$)

@@ -17,7 +17,7 @@ pidl - An IDL compiler written in Perl
 
 pidl --help
 
-pidl [--outputdir[=OUTNAME]] [--includedir DIR...] [--parse-idl-tree] [--dump-idl-tree] [--dump-ndr-tree] [--header[=OUTPUT]] [--python[=OUTPUT]] [--ndr-parser[=OUTPUT]] [--client] [--server] [--warn-compat] [--quiet] [--verbose] [--template] [--ws-parser[=OUTPUT]] [--diff] [--dump-idl] [--tdr-parser[=OUTPUT]] [--samba3-ndr-client[=OUTPUT]] [--samba3-ndr-server[=OUTPUT]] [--typelib=[OUTPUT]] [<idlfile>.idl]...
+pidl [--outputdir[=OUTNAME]] [--includedir DIR...] [--parse-idl-tree] [--dump-idl-tree] [--dump-ndr-tree] [--header[=OUTPUT]] [--python[=OUTPUT]] [--ndr-parser[=OUTPUT]] [--ndr-parser-mode] [--client] [--server] [--warn-compat] [--quiet] [--verbose] [--template] [--ws-parser[=OUTPUT]] [--diff] [--dump-idl] [--tdr-parser[=OUTPUT]] [--samba3-ndr-client[=OUTPUT]] [--samba3-ndr-server[=OUTPUT]] [--typelib=[OUTPUT]] [<idlfile>.idl]...
 
 =head1 DESCRIPTION
 
@@ -85,6 +85,12 @@ Generate a C header file for the specified interface. Filename defaults to OUTNA
 Generate a C file and C header containing NDR parsers. The filename for
 the parser defaults to ndr_OUTNAME.c. The header filename will be the
 parser filename with the extension changed from .c to .h.
+
+=item I<--ndr-parser-mode>
+
+Mode of the NDR parser:
+SERVER - generate server side functions only
+BOTH - generate server and client side functions
 
 =item I<--tdr-parser>
 
@@ -475,6 +481,7 @@ my($opt_client);
 my($opt_typelib);
 my($opt_server);
 my($opt_ndr_parser);
+my($opt_ndr_parser_mode);
 my($opt_tdr_parser);
 my($opt_ws_parser);
 my($opt_python);
@@ -563,6 +570,7 @@ my $result = GetOptions (
 		'tdr-parser:s' => \$opt_tdr_parser,
 		'template' => \$opt_template,
 		'ndr-parser:s' => \$opt_ndr_parser,
+		'ndr-parser-mode:s' => \$opt_ndr_parser_mode,
 		'client:s' => \$opt_client,
 		'ws-parser:s' => \$opt_ws_parser,
 		'python' => \$opt_python,
@@ -724,11 +732,13 @@ sub process_file($)
 		FileSave(($opt_server or "$outputdir/ndr_$basename\_s.c"), Parse::Pidl::Samba4::NDR::Server::Parse($ndr,$h_filename));
 	}
 
-	if (defined($opt_ndr_parser)) {
+	if (defined($opt_ndr_parser) or defined($opt_ndr_parser_mode)) {
 		my $parser_fname = ($opt_ndr_parser or "$outputdir/ndr_autogen/$basename\_ndr.cpp");
+		my $ndr_parser_mode = ($opt_ndr_parser_mode or "SERVER");
+		my $gen_client_functions = ($ndr_parser_mode ne "SERVER");
 		require Parse::Pidl::Samba4::NDR::Parser;
 		my $generator = new Parse::Pidl::Samba4::NDR::Parser();
-		my ($header,$parser) = $generator->Parse($ndr, $gen_header, $h_filename);
+		my $parser = $generator->Parse($ndr, $gen_header, $gen_client_functions);
 
 		FileSave($parser_fname, $parser);
 	}

@@ -18,7 +18,7 @@ use vars qw ( $VERSION );
 use Carp 'verbose';
 $SIG{ __DIE__ } = sub { Carp::confess( @_ ) };
 
-$VERSION = '0.02';
+$VERSION = '1.00';
 
 sub warning
 {

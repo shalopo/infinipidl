@@ -53,10 +53,7 @@ def build(bld):
     pidl_manpages = {
         'pidl': 'man1/pidl.${PERLMAN1EXT}',
         'lib/Parse/Pidl/NDR.pm': 'man3/Parse::Pidl::NDR.${PERLMAN3EXT}',
-        'lib/Parse/Pidl/Wireshark/Conformance.pm': 'man3/Parse::Pidl::Wireshark::Conformance.${PERLMAN3EXT}',
-        'lib/Parse/Pidl/Dump.pm': 'man3/Parse::Pidl::Dump.${PERLMAN3EXT}',
         'lib/Parse/Pidl/Util.pm': 'man3/Parse::Pidl::Util.${PERLMAN3EXT}',
-        'lib/Parse/Pidl/Wireshark/NDR.pm': 'man3/Parse::Pidl::Wireshark::NDR.${PERLMAN3EXT}'
     }
 
     for k in pidl_manpages.keys():

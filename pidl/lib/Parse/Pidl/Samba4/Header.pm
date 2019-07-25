@@ -356,6 +356,7 @@ sub HeaderImport
 	my @imports = @_;
 	foreach my $import (@imports) {
 		$import = unmake_str($import);
+		$import =~ s/.*\///;
 		$import =~ s/\.idl$//;
 		pidl  "#include \"$import.hpp\"\n";
 	}

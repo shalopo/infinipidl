@@ -918,7 +918,10 @@ sub ParseDataPull($$$$$$$)
 		}
 
 		my $type_name = $l->{DATA_TYPE};
-		my $data_type = getType($type_name)->{DATA}->{TYPE};
+		my $type = getType($type_name);
+		die("Unknown type: $type_name") if (not defined($type));
+
+		my $data_type = $type->{DATA}->{TYPE};
 
         if ($data_type eq "STRUCT")
 		{
@@ -1877,7 +1880,9 @@ sub ParseFunctionsPush($$)
 		$self->ParseFunctionPushIn($fn);
 	}
 
-	$self->ParseFunctionPushOut($fn);
+	if ($self->{gen_server_functions}) {
+		$self->ParseFunctionPushOut($fn);
+	}
 }
 
 sub ParseFunctionPushIn($$)
@@ -1960,7 +1965,9 @@ sub ParseFunctionsPull($$)
 {
 	my($self, $fn) = @_;
 
-	$self->ParseFunctionPullIn($fn);
+	if ($self->{gen_server_functions}) {
+		$self->ParseFunctionPullIn($fn);
+	}
 
 	if ($self->{gen_client_functions}) {
 		$self->ParseFunctionPullOut($fn);
@@ -2405,9 +2412,10 @@ sub GenerateIncludes($)
 # parse a parsed IDL structure back into an IDL file
 sub Parse($$$$)
 {
-	my($self, $ndr,$gen_header,$gen_client_functions) = @_;
+	my($self, $ndr,$gen_header,$mode) = @_;
 
-	$self->{gen_client_functions} = $gen_client_functions;
+	$self->{gen_client_functions} = ($mode eq "BOTH" or $mode eq "CLIENT");
+	$self->{gen_server_functions} = ($mode eq "BOTH" or $mode eq "SERVER");
 
 	use File::Basename;
 

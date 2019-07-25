@@ -90,6 +90,7 @@ parser filename with the extension changed from .c to .h.
 
 Mode of the NDR parser:
 SERVER - generate server side functions only
+CLIENT - generate client side functions only
 BOTH - generate server and client side functions
 
 =item I<--tdr-parser>
@@ -734,11 +735,9 @@ sub process_file($)
 
 	if (defined($opt_ndr_parser) or defined($opt_ndr_parser_mode)) {
 		my $parser_fname = ($opt_ndr_parser or "$outputdir/ndr_autogen/$basename\_ndr.cpp");
-		my $ndr_parser_mode = ($opt_ndr_parser_mode or "SERVER");
-		my $gen_client_functions = ($ndr_parser_mode ne "SERVER");
 		require Parse::Pidl::Samba4::NDR::Parser;
 		my $generator = new Parse::Pidl::Samba4::NDR::Parser();
-		my $parser = $generator->Parse($ndr, $gen_header, $gen_client_functions);
+		my $parser = $generator->Parse($ndr, $gen_header, $opt_ndr_parser_mode);
 
 		FileSave($parser_fname, $parser);
 	}

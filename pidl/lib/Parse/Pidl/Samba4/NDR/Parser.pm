@@ -947,8 +947,8 @@ sub ParseDataPull($$$$$$$)
 					$self->pidl("$var_name = $ndr.get_remaining_blob();");
 					$self->{remaining_blob} = 1;
 				} else {
-					assert_unssupported_element("DATA_BLOB with unsupported flags $self->{scoped_flags} - modify IDL by applying flags to the next field", $e) if $self->{scoped_flags};
-					assert_unssupported_element("Standard DATA_BLOB", $e);
+					die("Unsupported flags $self->{scoped_flags} on $e") if defined($self->{scoped_flags});
+					$self->pidl("$var_name = $ndr.get_dynamic_blob();");
 				}
 
 				$self->{scoped_flags} = undef;
@@ -1008,8 +1008,8 @@ sub ParseDataPush($$$$$$$)
 						$self->{remaining_blob} = 1;
 				}
 				else {
-					assert_unssupported_element("DATA_BLOB with unsupported flags $self->{scoped_flags} - modify IDL by applying flags to the next field", $e) if $self->{scoped_flags};
-					assert_unssupported_element("Standard DATA_BLOB", $e);
+					die("Unsupported flags $self->{scoped_flags} on $e") if defined($self->{scoped_flags});
+					$self->pidl("$ndr.put_dynamic_blob($var_name);");
 				}
 
 				$self->{scoped_flags} = undef;

@@ -1267,7 +1267,7 @@ sub ParsePtrPull($$$$$)
     {
         # Don't do this for arrays, they're allocated at the actual level of the array
         unless ($next_is_array or $next_is_string) {
-            $self->pidl("$var_name = $ndr.get_ptr_ref_id() ? $ndr.alloc<decltype(*$var_name)>() : nullptr;");
+            $self->pidl("$var_name = $ndr.get_ptr_ref_id_and_alloc<decltype(*$var_name)>();");
         } else {
             $self->pidl("$var_name = $ndr.get_array_place_holder<decltype($var_name)>();");
         }
@@ -2404,7 +2404,7 @@ sub GenerateIncludes($)
 		$self->pidl("#include \"nas/modules/smb/dce_rpc/ndr/ndr_writer.hpp\"");
         $self->pidl("#include \"nas/modules/smb/dce_rpc/ndr/ndr_op_translator.hpp\"");
         $self->pidl("#include \"nas/modules/smb/dce_rpc/ndr/ndr_internal_translator.hpp\"");
-        $self->pidl("#include \"nas/modules/smb/dce_rpc/ndr/ndr_string_utils.hpp\"");
+        $self->pidl("#include \"nas/modules/smb/dce_rpc/idl_utils.hpp\"");
 	}
 }
 

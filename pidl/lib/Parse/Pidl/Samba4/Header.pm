@@ -259,7 +259,7 @@ sub HeaderTypedef($;$)
 sub HeaderConst($)
 {
 	my($const) = shift;
-	pidl "static constexpr ".mapTypeName($const->{DTYPE})." $const->{NAME}\t = $const->{VALUE};\n";
+	pidl "static constexpr ".mapTypeName($const->{DTYPE})." $const->{NAME} = $const->{VALUE};\n";
 }
 
 sub ElementDirection($)
@@ -386,6 +386,11 @@ sub HeaderInterface($)
 
 	foreach my $c (@{$interface->{CONSTS}}) {
 		HeaderConst($c);
+	}
+
+	if ($interface->{UUID}) {
+		my @version_tokens = split(/\./, "$interface->{VERSION}");
+		pidl "static const DceRpcSyntaxId INTERFACE_SYNTAX_ID($interface->{UUID}, @version_tokens[0], @version_tokens[1]);\n";
 	}
 
 	pidl "\n";

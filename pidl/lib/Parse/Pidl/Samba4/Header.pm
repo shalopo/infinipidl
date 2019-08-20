@@ -24,7 +24,6 @@ my($tab_depth);
 my(@bitmaps);
 my(@union_switch_types);
 my(@default_enums);
-my $services_ns = "nas::smb::dcerpc::services";
 
 sub pidl($) { $res .= shift; }
 
@@ -358,7 +357,7 @@ sub HeaderImport
 		$import = unmake_str($import);
 		$import =~ s/.*\///;
 		$import =~ s/\.idl$//;
-		pidl  "#include \"$import.hpp\"\n";
+		pidl  "#include \"../$import/$import.hpp\"\n";
 	}
 	pidl "\n";
 }
@@ -377,12 +376,15 @@ sub HeaderInterface($)
 {
 	my($interface) = shift;
 
+	my $partial_interface_ns = "services::$interface->{NAME}";
+	my $full_interface_ns = "nas::smb::dcerpc::$partial_interface_ns";
+
 	@bitmaps = ();
 	@union_switch_types = ();
 	@default_enums = ();
 
 	pidl "\n";
-	pidl "namespace $services_ns\::$interface->{NAME} {\n\n";
+	pidl "namespace $full_interface_ns {\n\n";
 
 	foreach my $c (@{$interface->{CONSTS}}) {
 		HeaderConst($c);
@@ -409,9 +411,9 @@ sub HeaderInterface($)
 		HeaderFunction($fn);
 	}
 
-	pidl "} // namespace $services_ns\::$interface->{NAME}\n";
+	pidl "} // namespace $full_interface_ns\n";
 
-	if (@union_switch_types or @default_enums)
+	if (@union_switch_types or @default_enums or @{$interface->{FUNCTIONS}})
 	{
 		pidl "\n";
 		pidl "namespace nas::smb::dcerpc {\n";
@@ -425,15 +427,21 @@ sub HeaderInterface($)
 				$switch_type_name = mapTypeName($switch_type_name);
 			}
 			else {
-				$switch_type_name = "$services_ns\::$interface->{NAME}::$switch_type_name";
+				$switch_type_name = "$partial_interface_ns\::$switch_type_name";
 			}
 
-			pidl "template<> struct DceRpcUnionSwitchType<$services_ns\::$interface->{NAME}::$union_type_name> { using type = $switch_type_name; };\n";
+			pidl "template<> struct DceRpcUnionSwitchType<$partial_interface_ns\::$union_type_name> { using type = $switch_type_name; };\n";
 		}
 
 		pidl "\n" if (@default_enums);
 		foreach (@default_enums) {
-			pidl "template<> struct IsDceRpcDefaultFormatEnum<$services_ns\::$interface->{NAME}::$_> { static constexpr bool value = true; };\n";
+			pidl "template<> struct IsDceRpcDefaultFormatEnum<$partial_interface_ns\::$_> { static constexpr bool value = true; };\n";
+		}
+
+		pidl "\n";
+
+		foreach my $fn (@{$interface->{FUNCTIONS}}) {
+			pidl "template<> struct DceRpcDefaultOpNumber<$partial_interface_ns\::$fn->{NAME}> { static constexpr DceRpcOpNumber value = $partial_interface_ns\::OP_NUMBER_$fn->{NAME}; };\n";
 		}
 
 		pidl "\n";
@@ -444,7 +452,7 @@ sub HeaderInterface($)
 	{
 		pidl "\n";
 		foreach my $bitmap (@bitmaps) {
-			pidl "template<> struct EnableEnumFlags<$services_ns\::$interface->{NAME}::$bitmap> {};\n";
+			pidl "template<> struct EnableEnumFlags<$full_interface_ns\::$bitmap> {};\n";
 		}
 		pidl "\n";
 	}

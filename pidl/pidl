@@ -470,7 +470,6 @@ my($opt_dump_idl_tree);
 my($opt_dump_ndr_tree);
 my($opt_dump_idl) = 0;
 my($opt_diff) = 0;
-my($opt_header);
 my($opt_samba3_header);
 my($opt_samba3_parser);
 my($opt_samba3_server);
@@ -565,7 +564,6 @@ my $result = GetOptions (
 		'samba3-ndr-client:s' => \$opt_samba3_ndr_client,
 		'samba3-ndr-server:s' => \$opt_samba3_ndr_server,
 		'samba3-template' => \$opt_samba3_template,
-		'header:s' => \$opt_header,
 		'server:s' => \$opt_server,
 		'typelib:s' => \$opt_typelib,
 		'tdr-parser:s' => \$opt_tdr_parser,
@@ -602,7 +600,7 @@ sub process_file($)
 {
 	my $idl_file = shift;
 
-	my $outputdir = dirname($idl_file)."/../";
+	my $outputdir = $opt_outputdir;
 	my $pidl;
 	my $ndr;
 
@@ -675,33 +673,18 @@ sub process_file($)
 		$generator->Initialize($cnffile);
 	}
 
-
-	if (defined($opt_ws_parser) or
-		defined($opt_client) or
-		defined($opt_server) or
-		defined($opt_header) or
-		defined($opt_ndr_parser) or
-		defined($opt_python) or
-		defined($opt_dump_ndr_tree) or
-		defined($opt_samba3_header) or
-		defined($opt_samba3_parser) or
-		defined($opt_samba3_server) or
-		defined($opt_samba3_ndr_client) or
-		defined($opt_samba3_ndr_server)) {
-		require Parse::Pidl::NDR;
-		$ndr = Parse::Pidl::NDR::Parse($pidl);
-	}
+	require Parse::Pidl::NDR;
+	$ndr = Parse::Pidl::NDR::Parse($pidl);
 
 	if (defined($opt_dump_ndr_tree)) {
 		my($ndr_file) = ($opt_dump_ndr_tree or "$outputdir/$basename.ndr");
 		SaveStructure($ndr_file, $ndr) or die "Failed to save $ndr_file\n";
 	}
 
-	my $gen_header = ($opt_header or "$outputdir/include/$basename.hpp");
-	if (defined($opt_header)) {
-		require Parse::Pidl::Samba4::Header;
-		FileSave($gen_header, Parse::Pidl::Samba4::Header::Parse($ndr));
-	}
+	my $gen_header = "$outputdir/$basename.hpp";
+
+	require Parse::Pidl::Samba4::Header;
+	FileSave($gen_header, Parse::Pidl::Samba4::Header::Parse($ndr));
 
 	my $h_filename = "$outputdir/ndr_$basename.h";
 	my $c_header = "$outputdir/ndr_$basename\_c.h";
@@ -734,7 +717,7 @@ sub process_file($)
 	}
 
 	if (defined($opt_ndr_parser) or defined($opt_ndr_parser_mode)) {
-		my $parser_fname = ($opt_ndr_parser or "$outputdir/ndr_autogen/$basename\_ndr.cpp");
+		my $parser_fname = ($opt_ndr_parser or "$outputdir/$basename\_ndr.cpp");
 		require Parse::Pidl::Samba4::NDR::Parser;
 		my $generator = new Parse::Pidl::Samba4::NDR::Parser();
 		my $parser = $generator->Parse($ndr, $gen_header, $opt_ndr_parser_mode);
@@ -801,8 +784,6 @@ sub process_file($)
 		FileSave($server, $c_code);
 		FileSave($header, $h_code);
 	}
-
-	unless ($opt_quiet) { print "Done compiling $idl_file\n"; }
 }
 
 if (scalar(@ARGV) == 0) {
@@ -811,16 +792,6 @@ if (scalar(@ARGV) == 0) {
 }
 
 foreach (@ARGV) {
-	my $path = $_;
-	if (opendir(my $dh, $path)) {
-		while (readdir $dh) {
-			if ($_ =~ ".idl") {
-				process_file($path . $_);
-			}
-		}
-		closedir $dh;
-	} else {
-		process_file($path);
-	}
+	process_file($_);
 }
-print("Done.");
+
